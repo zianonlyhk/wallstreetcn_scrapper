@@ -1,0 +1,14 @@
+[project]
+name = "wallstreetcn_scrapper"
+version = "1.0.0"
+description = "一个 MCP 服务，用于从 wallstreetcn.com 网站检索指定过去时间段内的新闻条目，并获取其中的内容。"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "bs4>=0.0.2",
+    "ipykernel>=6.29.5",
+    "mcp[cli]>=1.6.0",
+    "numpy>=2.2.4",
+    "pip>=25.0.1",
+    "selenium>=4.31.0",
+]
