@@ -1,102 +1,117 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import asyncio
+import aiohttp
 from bs4 import BeautifulSoup
-import time
+import logging
+from typing import Dict, Optional
+from src.cache_utils import shared_cache
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def get_news_data(urls: list[str]) -> list[str]:
-    """Process a list of URLs and return a list of scraped news results"""
-    results = []
+async def fetch_page(session: aiohttp.ClientSession, url: str) -> Optional[str]:
+    """Fetch page content with caching"""
+    cached_content = shared_cache.get(url)
+    if cached_content is not None:
+        return cached_content
+        
+    try:
+        async with session.get(url) as response:
+            if response.status == 200:
+                content = await response.text()
+                shared_cache.set(url, content)
+                return content
+            logger.warning(f"Failed to fetch {url}: Status {response.status}")
+    except Exception as e:
+        logger.error(f"Error fetching {url}: {str(e)}")
+    return None
+
+async def get_news_data(urls: list[str]) -> list[Dict]:
+    """Process a list of URLs and return structured news data"""
+    connector = aiohttp.TCPConnector(limit_per_host=5)
+    timeout = aiohttp.ClientTimeout(total=30)
     
-    for url in urls:
-        # Set up headless Chrome
-        chrome_options = Options()
-        chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-        driver = webdriver.Chrome(options=chrome_options)
-    
-        try:
-            # Load the page
-            driver.get(url)
-            
-            # Wait for the <article> element to load
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, 'article'))
-            )
-            time.sleep(5)  # Wait for content to load
-
-            # Get page source and parse with BeautifulSoup
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            
-            # Initialize data dictionary
-            article_data = {
-                "title": "",
-                "date": "",
-                "content": "",
-                "source_url": url
-            }
-            
-            # Extract title - common patterns for article titles
-            title_element = soup.select_one('article h1') or soup.select_one('h1.article-title') or soup.select_one('h1')
-            if title_element:
-                article_data["title"] = title_element.text.strip()
-            
-            # Extract date - look for common date patterns
-            # Try different common selectors for dates
-            date_element = (
-                soup.select_one('article time') or 
-                soup.select_one('article .date') or 
-                soup.select_one('article .published-date') or
-                soup.select_one('article .post-date') or
-                soup.select_one('time')
-            )
-            
-            if date_element:
-                if date_element.get('datetime'):
-                    article_data["date"] = date_element.get('datetime')
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        tasks = [fetch_page(session, url) for url in urls]
+        pages = await asyncio.gather(*tasks)
+        
+        results = []
+        for i, page in enumerate(pages):
+            if not page:
+                results.append({
+                    "error": f"Failed to fetch {urls[i]}",
+                    "source_url": urls[i]
+                })
+                continue
+                
+            try:
+                soup = BeautifulSoup(page, 'html.parser')
+                article_section = soup.select_one('article')
+                if article_section:
+                    article_data = process_article(soup, article_section, urls[i])
+                    results.append(article_data)
                 else:
-                    article_data["date"] = date_element.text.strip()
-            
-            # Select the <article> section for content
-            article_section = soup.select_one('article')
-            if not article_section:
-                print("No <article> section found on the page.")
-                return article_data
-            
-            # Remove unwanted elements within the article
-            for unwanted in article_section.select('script, style, article h1, article time, article .date, article .published-date, article .post-date, time, .ad, .advertisement, .related-articles, .comments'):
-                unwanted.decompose()
-            
-            # Extract all visible text
-            visible_text = []
-            for element in article_section.find_all(string=True):
-                text = element.strip()
-                visible_text.append(text)
-            
-            # Join text with newlines, removing excessive empty lines
-            content_text = '\n'.join(line for line in visible_text if line)
-            
-            # Remove the value before the first newline (and the newline itself)
-            if '\n' in content_text:
-                article_data["content"] = content_text.split('\n', 1)[1]
-            else:
-                article_data["content"] = content_text
-            
-            results.append(str(article_data))
-    
-        except Exception as e:
-            print(f"Error extracting article content: {e}")
-            results.append("Error: {str(e)}")
-    
-        finally:
-            driver.quit()
+                    results.append({
+                        "error": f"No article content found at {urls[i]}",
+                        "source_url": urls[i]
+                    })
+            except Exception as e:
+                logger.error(f"Error processing {urls[i]}: {str(e)}")
+                results.append({
+                    "error": str(e),
+                    "source_url": urls[i]
+                })
     
     return results
+
+def process_article(soup: BeautifulSoup, article_section, url: str) -> dict:
+    """Process article content and return structured data"""
+    article_data = {
+        "title": "",
+        "date": "",
+        "content": "",
+        "source_url": url
+    }
+    
+    # Extract title
+    title_element = soup.select_one('article h1') or soup.select_one('h1.article-title') or soup.select_one('h1')
+    if title_element:
+        article_data["title"] = title_element.text.strip()
+    
+    # Extract date
+    date_element = (
+        soup.select_one('article time') or 
+        soup.select_one('article .date') or 
+        soup.select_one('article .published-date') or
+        soup.select_one('article .post-date') or
+        soup.select_one('time')
+    )
+    
+    if date_element:
+        if date_element.get('datetime'):
+            article_data["date"] = date_element.get('datetime')
+        else:
+            article_data["date"] = date_element.text.strip()
+    
+    # Remove unwanted elements
+    for unwanted in article_section.select('script, style, article h1, article time, article .date, article .published-date, article .post-date, time, .ad, .advertisement, .related-articles, .comments'):
+        unwanted.decompose()
+    
+    # Extract all visible text
+    visible_text = []
+    for element in article_section.find_all(string=True):
+        text = element.strip()
+        visible_text.append(text)
+    
+    # Join text with newlines
+    content_text = '\n'.join(line for line in visible_text if line)
+    
+    if '\n' in content_text:
+        article_data["content"] = content_text.split('\n', 1)[1]
+    else:
+        article_data["content"] = content_text
+    
+    return article_data
 
 
 def main():
@@ -108,7 +123,7 @@ def main():
     ]
     print(f"Testing article scraping for URLs: {test_urls}")
     
-    articles_data = get_news_data(test_urls)
+    articles_data = asyncio.run(get_news_data(test_urls))
     for data in articles_data:
         print(data)
 
