@@ -164,10 +164,6 @@ def get_news_entries(url='https://wallstreetcn.com/news/global', time_filter=24)
                 print(f"Error processing link: {e}")
                 continue
         
-        # Print or process the collected entries
-        for entry in news_entries:
-            print(f"ID: {entry['ID']}, Title: {entry['Title']}, URL: {entry['URL']}")
-        
         return news_entries
     
     except Exception as e:
@@ -203,6 +199,6 @@ def get_news_entries_as_json(url='https://wallstreetcn.com/news/global', time_fi
 
 
 if __name__ == "__main__":
-    json_str = get_news_entries_as_json(time_filter=2)
+    json_str = get_news_entries_as_json(time_filter=24)
     print(json_str)
 
