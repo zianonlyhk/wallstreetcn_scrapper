@@ -31,8 +31,8 @@ def get_driver():
         chrome_options.add_argument('--page-load-strategy=eager')  # Don't wait for all resources
         
         thread_local.driver = webdriver.Chrome(options=chrome_options)
-        thread_local.driver.implicitly_wait(3)  # Reduced wait time
-        thread_local.driver.set_page_load_timeout(10)  # Set page load timeout
+        thread_local.driver.implicitly_wait(5)  # Reduced wait time
+        thread_local.driver.set_page_load_timeout(20)  # Set page load timeout
     
     return thread_local.driver
 
